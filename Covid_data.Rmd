@@ -1,0 +1,210 @@
+---
+title: "Covid_data"
+author: "Saiteja Malisetty"
+date: "4/17/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Data Cleaning, eval=FALSE, include=FALSE}
+library(plyr) 
+library(dplyr)
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(xgboost)
+library(caret)
+library(lubridate)
+library(randomForest)
+library(ranger)
+library(vtreat)
+library(usmap)
+
+
+###Loading Datasets###
+Confirmed <- read_csv("Confirmed.csv")
+Deaths <- read_csv("Deaths.csv")
+Population <- read_csv("Population.csv")
+StayHomeOrder <- read_csv("StayHomeOrder.csv")
+Beds <- read_csv("Beds.csv")
+Area <- read_csv("Area.csv")
+Demographic <- read_csv("Demographic.csv")
+TestsNumber <- read_csv("TestsNumber.csv")
+
+
+###Changing the name on the second column###
+colnames(Confirmed)[2] <- "County"
+colnames(Deaths)[2] <- "County"
+colnames(Population)[2] <- "County"
+
+
+###Excluding the Cruise ship###
+Confirmed <- Confirmed %>%
+  filter(County != "Grand Princess Cruise Ship")
+
+
+Deaths <- Deaths %>%
+  filter(County != "Grand Princess Cruise Ship")
+
+
+###Filtering the data###
+Confirmed_train <- Confirmed
+Deaths_train <- Deaths
+
+
+###Fixing county names for Cases and Deaths to match###
+Deaths_train <- Deaths_train %>%
+  {mutate(., County = str_replace_all(.$County, "Broomfield County", "Broomfield County and City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Lac qui Parle County", "Lac Qui Parle County"))} %>%
+  #{mutate(., County = str_replace_all(.$County, "DoÔø??a Ana County", "Dona Ana County"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Mathews County", "Matthews County"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Alexandria city", "Alexandria City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Charlottesville city", "Charlottesville City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Chesapeake city", "Chesapeake City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Danville city", "Danville City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Fredericksburg city", "Fredericksburg City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Harrisonburg city", "Harrisonburg City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Manassas city", "Manassas City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Norfolk city", "Norfolk City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Portsmouth city", "Portsmouth City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Richmond city", "Richmond City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Suffolk city", "Suffolk City"))} %>%
+  {mutate(., County = str_replace_all(.$County, "Virginia Beach city", "Virginia Beach City"))}
+
+
+###Check the difference in county names of Cases and Deaths###
+list = unique(Confirmed_train$State)
+
+for (i in 1:length(list)) {
+  ak<- Confirmed_train %>%
+    filter(State == list[i])
+  ak2 <- Deaths_train %>%
+    filter(State == list[i])
+  print(i)
+  print(list[i])
+  print(setdiff(ak$County, ak2$County))
+  
+}
+
+rm(list, ak, ak2, i)
+
+
+###Check the difference in county names of Cases and Population###
+list = unique(Confirmed_train$State)
+
+for (i in 1:length(list)) {
+  ak<- Confirmed_train %>%
+    filter(State == list[i])
+  ak2 <- Population %>%
+    filter(State == list[i])
+  print(i)
+  print(list[i])
+  print(setdiff(ak$County, ak2$County))
+  
+}
+
+rm(list, ak, ak2, i)
+```
+
+# Loading New Data Sets
+```{r Data prep}
+Confirmed_train <- read.csv("Confirmed_Cases_Train.csv")
+Confirmed_test <- read.csv("Confirmed_Cases_Test.csv")
+Death_train <- read.csv("Deaths_Train.csv")
+Death_test <- read.csv("Deaths_Test.csv")
+
+str(Confirmed_train)
+str(Confirmed_test)
+str(Death_train)
+str(Death_test)
+
+Confirmed_train <- Confirmed_train[, -c(1:3)]
+Confirmed_test <- Confirmed_test[, -c(1:3)]
+Death_train <- Death_train[, -c(1:3)]
+Death_test <- Death_test[, -c(1:3)]
+
+```
+
+```{r Linear Regression cases}
+library(MASS)
+library(ISLR)
+library(ggplot2)
+library(caret)
+library(tidyverse)
+
+trControl <- trainControl(method = 'none')
+dataset <- Confirmed_train
+target_var <- 'Day28'
+
+lm_fit_cases <- train(Day28 ~ . , data = dataset, method = 'lm', trControl = trControl)
+summary(lm_fit_cases)
+lm_fit_cases$finalModel
+
+# we can also use the vif (variance inflation factor) function to see which predictors have the most influence in the regression. the built-in version of varImp() in caret uses the t statistics for regression
+lm_fit_importance <- varImp(lm_fit_cases, scale = FALSE) # scale=TRUE scales everything between 0 and 100, where 100 indicates the highest importance 
+plot(lm_fit_importance)
+
+# we can get the MSE and RMSE from the model output:
+RMSE <- RMSE(pred = lm_fit_cases$finalModel$fitted.values, obs = dataset[[target_var]])
+MSE <- RMSE^2
+R2 <- R2(pred = lm_fit_cases$finalModel$fitted.values, obs = dataset[[target_var]])
+R2_lm <- summary(lm_fit_cases$finalModel)$r.squared
+# a note: caret uses a slightly different version to calculate R2, namely it calculates the correlation between observed and predicted values and squares this correlation r. this can lead to slight differences in R2 compared to what we're used to from the lm() models. However, for all intents and purposes of this class, we don't need to worry about these small differences
+
+# to get the confidence intervals for the parameters, you can use the confint functions
+confint(lm_fit_cases$finalModel)
+
+## Prediction on new data
+# we can predict the regression output for new values of x by using the generic 'predict' function 
+Confirmed_test$Day28 <- predict(lm_fit_cases, newdata = Confirmed_test)
+
+# sidenote: note that when we want to predict new data points, we have to distinguish between confidence intervals 
+Confirmed_test$Conf <- predict(lm_fit_cases$finalModel, newdata = Confirmed_test, interval="confidence") 
+# confidence is the for actual values of the parameters
+Confirmed_test$pred <- predict(lm_fit_cases$finalModel, newdata = Confirmed_test, interval="prediction") # prediction intervals are larger than confidence intervals, as we have additional uncertainty when predicting new data
+
+```
+
+
+```{r covid deaths}
+trControl <- trainControl(method = 'none')
+dataset <- Death_train
+target_var <- 'Day28'
+
+lm_fit_cases <- train(Day28 ~ . , data = dataset, method = 'lm', trControl = trControl)
+summary(lm_fit_cases)
+lm_fit_cases$finalModel
+
+# we can also use the vif (variance inflation factor) function to see which predictors have the most influence in the regression. the built-in version of varImp() in caret uses the t statistics for regression
+lm_fit_importance <- varImp(lm_fit_cases, scale = FALSE) # scale=TRUE scales everything between 0 and 100, where 100 indicates the highest importance 
+plot(lm_fit_importance)
+
+# we can get the MSE and RMSE from the model output:
+RMSE <- RMSE(pred = lm_fit_cases$finalModel$fitted.values, obs = dataset[[target_var]])
+MSE <- RMSE^2
+R2 <- R2(pred = lm_fit_cases$finalModel$fitted.values, obs = dataset[[target_var]])
+R2_lm <- summary(lm_fit_cases$finalModel)$r.squared
+# a note: caret uses a slightly different version to calculate R2, namely it calculates the correlation between observed and predicted values and squares this correlation r. this can lead to slight differences in R2 compared to what we're used to from the lm() models. However, for all intents and purposes of this class, we don't need to worry about these small differences
+
+# to get the confidence intervals for the parameters, you can use the confint functions
+confint(lm_fit_cases$finalModel)
+
+## Prediction on new data
+# we can predict the regression output for new values of x by using the generic 'predict' function 
+Death_test$Day28 <- predict(lm_fit_cases, newdata = Death_test)
+
+# sidenote: note that when we want to predict new data points, we have to distinguish between confidence intervals 
+Death_test$Conf <- predict(lm_fit_cases$finalModel, newdata = Death_test, interval="confidence") 
+# confidence is the for actual values of the parameters
+Death_test$pred <- predict(lm_fit_cases$finalModel, newdata = Death_test, interval="prediction") # prediction intervals are larger than confidence intervals, as we have additional uncertainty when predicting new data
+```
+
+```{r output, eval=FALSE, include=FALSE}
+write.csv(Confirmed_test, file = "Covid_cases_Predictions.csv")
+write.csv(Death_test, file = "Covid_deaths_Predictions.csv")
+```
+
